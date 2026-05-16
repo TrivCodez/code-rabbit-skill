@@ -6,43 +6,51 @@ license: MIT
 
 # code-rabbit — PR Review Skill
 
-Performs a structured PR review. Each finding is output as a **separate inline comment** — like GitHub's "View reviewed changes" reviewer comments — not dumped into one big block. Output goes to **chat by default**.
+Performs a structured PR review. Output goes to **chat by default** as separate comment cards.
 
-**Never mention "CodeRabbit" in any output.**  
-**Never post to GitHub unless the user explicitly says so.**  
-**Never combine all findings into one comment wall.**
-
----
-
-## Input Modes
-
-- A **GitHub PR URL** → fetch `<url>.diff` via web_fetch if network available
-- A **raw diff or code paste** → review inline
-- A **PR description + code** → combine for full context
-- A **screenshot of a PR** → extract visible code/comments and review
+**Never mention "CodeRabbit" anywhere in output.**
+**Never post to GitHub unless the user explicitly says so.**
+**Never dump all findings into one single comment.**
 
 ---
 
-## Output Structure — Separate Comments
+## Step 1 — Parse the Input
 
-Produce the review as a sequence of **individual comment cards**, one per file/finding. This mirrors how GitHub displays inline reviewer comments, not a single issue comment.
+Accept any of:
+- GitHub PR URL → use GitHub MCP to fetch the PR diff and file list
+- Raw diff or code paste → review inline
+- PR description + code → combine for context
+- Screenshot → extract visible code and review
 
-Start with a small header, then emit each comment as its own standalone block separated by a visible divider.
+From the input, identify: files changed, PR purpose, related issue number, tech stack.
 
-### Header (once, at the top)
+---
 
+## Step 2 — Run the Review
+
+Analyse the diff and produce findings across these categories in priority order:
+auth → state management → API calls → error handling → accessibility → copy/UX
+
+For each finding assign a severity:
+- 🔴 Critical — data loss, security hole, crash, broken auth
+- 🟠 Major — broken retry, bad error handling, wrong API usage, UX bug
+- 🟡 Minor — misleading copy, naming issue, style inconsistency
+- 💡 Suggestion — optional improvement, no fix required
+
+---
+
+## Step 3 — Output Format (chat default)
+
+### Header (once)
 ```
-🔍 PR Review — <PR title or branch name>
-Closes #<issue> · <file count> file(s) · +<lines> lines
-
+🔍 PR Review — <branch or PR title>
+Closes #<N> · <N> file(s) · +<N> lines
 Actionable comments: <N>
 ```
 
----
+### Each finding = its own separate block
 
-### Per-Finding Comment Block
-
-Each finding is a self-contained comment. Emit one block per file/issue — **never merge multiple findings into one block**.
+NEVER merge two findings into one block. Each gets its own `━━━` card:
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -51,70 +59,43 @@ Each finding is a self-contained comment. Emit one block per file/issue — **ne
 
 **Short title of the issue.**
 
-One to two sentences: what is wrong, why it matters.
+What is wrong and why it matters (1–2 sentences).
 
 ▼ Suggested fix
-- old code line
-+ new code line
+```diff
+- old line
++ new line
+```
 
 ▼ 📝 Committable suggestion
-(full corrected block, ready to apply)
+```language
+// full corrected block ready to apply
+```
 
 ▼ 🤖 Prompt for AI Agents
+```
 Verify each finding against current code. Fix only still-valid issues,
 skip the rest with a brief reason, keep changes minimal, and validate.
 
-In `@path/to/file.ext` around lines X–Y, [precise instruction: what to
-change, what to replace it with, side effects to handle (i18n keys,
-shared constants, snapshot tests), and what to verify after the fix].
+In `@path/to/file.ext` around lines X–Y, [exact instruction: what to
+change, what to replace with, side effects (i18n keys, shared constants,
+snapshot tests), and what to verify after].
+```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
----
+Suggestions (💡) only need a short description — no fix or committable suggestion required.
 
-## Severity Tags
-
-| Level | Severity line |
-|---|---|
-| Critical | `🔴 Critical` |
-| Major | `⚠️ Potential issue | 🟠 Major | ⚡ Quick win` |
-| Minor | `⚠️ Potential issue | 🟡 Minor | ⚡ Quick win` |
-| Suggestion | `💡 Suggestion` |
-
-Suggestions do **not** need a suggested fix or committable suggestion — just a short description.
-
----
-
-## AI Agent Prompt Rules
-
-Every Critical/Major/Minor block must include a `🤖 Prompt for AI Agents` section. Rules:
-
-1. Always open with: `Verify each finding against current code. Fix only still-valid issues, skip the rest with a brief reason, keep changes minimal, and validate.`
-2. Reference file with `@path/to/file.ext` syntax
-3. Include exact line range
-4. Be fully self-contained — no assumed context
-5. Call out side effects: i18n keys, shared constants, tests, snapshots
-6. End with what to verify after the fix
-
----
-
-## Praise Block (after all findings)
-
-Emit a separate praise block at the end. Keep it specific, not generic.
-
+### Praise block (after all findings)
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ✅ Praise
-
-• [Specific thing done well and why it matters]
-• [Another specific positive if warranted]
+• Specific thing done well and why it matters.
+• Another specific positive if warranted.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
----
-
-## Summary Block (always last)
-
+### Summary block (always last)
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📋 REVIEW SUMMARY
@@ -133,39 +114,81 @@ Reason: One sentence.
 
 ---
 
+## Step 4 — GitHub Posting (only when user explicitly asks)
+
+When the user says "post to GitHub", "submit review", or "comment on the PR":
+
+Use the GitHub MCP to submit a **proper pull request review** — NOT a single issue comment.
+
+### Exact GitHub MCP flow:
+
+1. **Fetch PR details** via GitHub MCP to get: `owner`, `repo`, `pull_number`, and the latest commit SHA (`head.sha`)
+
+2. **For each Critical/Major/Minor finding**, call the GitHub MCP `create_pull_request_review` or equivalent tool with:
+   - `commit_id`: the latest commit SHA
+   - `event`: `REQUEST_CHANGES` (or `APPROVE` / `COMMENT` based on verdict)
+   - `comments`: array of inline comment objects, one per finding:
+     ```json
+     {
+       "path": "src/path/to/file.ext",
+       "line": <end line number of the finding>,
+       "body": "<severity line>\n\n**Title**\n\nExplanation.\n\n```suggestion\n// corrected code\n```\n\n🤖 Prompt for AI Agents\n..."
+     }
+     ```
+
+3. **Top-level review body**: post only the Summary block as the main review body — NOT the individual findings (those go as inline comments).
+
+4. **Do NOT** post a separate issue comment or PR comment with all findings merged — that is the wrong format.
+
+### Inline comment body format (GitHub markdown):
+```
+⚠️ Potential issue | 🟠 Major | ⚡ Quick win
+
+**Title of the issue.**
+
+Explanation of the problem.
+
+```suggestion
+// corrected code block
+```
+
+<details>
+<summary>🤖 Prompt for AI Agents</summary>
+
+Verify each finding against current code. Fix only still-valid issues,
+skip the rest with a brief reason, keep changes minimal, and validate.
+
+In `@path/to/file.ext` around lines X–Y, [instruction].
+</details>
+```
+
+---
+
 ## Output Destination Rules
 
 | User says | Action |
 |---|---|
-| Nothing (default) | Output to chat as separate comment blocks |
-| "send to Slack" | Reformat with Slack mrkdwn, use Slack MCP if connected |
-| "post to GitHub" / "comment on PR" | Format as GitHub review with inline comments + suggestion blocks |
-| "send via email" | Plain email body |
-| "save to file" | Write to /mnt/user-data/outputs/pr-review.md |
+| Nothing (default) | Chat — separate ━━━ cards |
+| "send to Slack" | Slack mrkdwn format, use Slack MCP |
+| "post to GitHub" / "submit review" / "comment on PR" | GitHub MCP — inline comments per finding + summary as review body |
+| "save to file" | /mnt/user-data/outputs/pr-review.md |
 
 ---
 
-## Slack Format (when requested)
+## AI Agent Prompt Rules
 
-- `*bold*` not `**bold**`
-- `:warning:` `:large_orange_circle:` `:large_yellow_circle:` `:white_check_mark:` `:bulb:` for icons
-- Triple backticks for code
-- Each comment block still separate, divided with `---`
-
----
-
-## GitHub Format (only when explicitly requested)
-
-When posting to GitHub, each finding becomes a **separate inline review comment** on the specific file + line — not one top-level comment. Use:
-- suggestion blocks for committable suggestions (one-click apply)
-- One top-level review comment for the summary only
+1. Open with: `Verify each finding against current code. Fix only still-valid issues, skip the rest with a brief reason, keep changes minimal, and validate.`
+2. Use `@path/to/file.ext` syntax
+3. Give exact line range
+4. Be fully self-contained
+5. Mention side effects: i18n keys, constants, snapshots, related components
+6. End with what to verify
 
 ---
 
 ## Notes
 
-- If the diff is large, prioritise: auth → state management → API calls → error handling → accessibility → copy.
-- If only a description is given with no code, say so and ask for the diff or file.
-- If a GitHub URL is given and web_fetch is available, fetch `<url>.diff` automatically.
-- Never invent line numbers — write "verify line number" in the agent prompt if unsure.
-- Never say "CodeRabbit" anywhere in the output. The review is yours, not attributed to any tool.
+- Never invent line numbers — write "verify line number" in agent prompt if unsure.
+- Never say "CodeRabbit" anywhere in output.
+- If GitHub MCP tools aren't available when trying to post, tell the user clearly.
+- If only a description is given with no code, ask for the diff.
